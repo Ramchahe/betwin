@@ -8,7 +8,7 @@ interface EmailOptions {
 
 // Create a transporter
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "smtp.example.com",
+  host: process.env.SMTP_HOST || "smtp.gmail.com",
   port: Number.parseInt(process.env.SMTP_PORT || "587"),
   secure: process.env.SMTP_SECURE === "true",
   auth: {

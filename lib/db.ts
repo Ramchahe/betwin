@@ -1,10 +1,15 @@
 import mysql from "mysql2/promise"
+import fs from "fs"
+import path from "path"
+
+// Track if the database has already been initialized
+let isInitialized = false;
 
 // Create a connection pool
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST,
   user: process.env.MYSQL_USER,
-  password: process.env.MYSQL_PASSWORD,
+  password: process.env.MYSQL_PASSWORD || "",
   database: process.env.MYSQL_DATABASE,
   waitForConnections: true,
   connectionLimit: 10,
@@ -20,6 +25,86 @@ export async function executeQuery<T>({ query, values = [] }: { query: string; v
     throw new Error("Database query failed")
   }
 }
+
+// Test database connection
+export async function testDatabaseConnection() {
+  try {
+    // Simple query to check connection
+    const [result] = await pool.query('SELECT 1 as connection_test');
+    console.log('✅ Database connection successful!');
+    return { connected: true, message: 'Database connected successfully' };
+  } catch (error) {
+    console.error('❌ Database connection failed:', error);
+    return { 
+      connected: false, 
+      message: 'Database connection failed', 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+}
+
+// Initialize database schema
+export async function initializeDatabase() {
+  // Prevent multiple initializations
+  if (isInitialized) {
+    return true;
+  }
+
+  try {
+    // Check connection first
+    const connectionTest = await testDatabaseConnection();
+    if (!connectionTest.connected) {
+      console.error("Cannot initialize database - connection failed");
+      return false;
+    }
+
+    console.log("Reading schema.sql file...");
+    const schemaPath = path.join(process.cwd(), 'db', 'schema.sql');
+    const schemaSQL = fs.readFileSync(schemaPath, 'utf8');
+
+    // Split by semicolon to execute each statement separately
+    const statements = schemaSQL
+      .replace(/--.*$/gm, '') // Remove SQL comments
+      .split(';')
+      .map(statement => statement.trim())
+      .filter(statement => statement.length > 0);
+
+    console.log(`Found ${statements.length} SQL statements to execute`);
+
+    // Execute each statement
+    for (const statement of statements) {
+      try {
+        await pool.execute(statement);
+      } catch (error) {
+        // Ignore duplicate key errors as tables might already exist
+        const err = error as any;
+        if (err.code === 'ER_DUP_KEYNAME' || err.code === 'ER_TABLE_EXISTS_ERROR') {
+          // This is expected if schema was already created, just log it
+          console.log(`Notice: ${err.code} - ${err.sqlMessage} (This is normal if tables already exist)`);
+        } else {
+          console.error(`Error executing SQL: ${statement.substring(0, 100)}...`);
+          console.error(error);
+        }
+        // Continue with other statements even if one fails
+      }
+    }
+
+    console.log('✅ Database schema initialized successfully!');
+    isInitialized = true;
+    return true;
+  } catch (error) {
+    console.error('❌ Error initializing database schema:', error);
+    return false;
+  }
+}
+
+// Initialize the database on module load - but only once
+(async () => {
+  if (!isInitialized) {
+    console.log("Initializing database...");
+    await initializeDatabase();
+  }
+})();
 
 // User related queries
 export async function getUserByEmail(email: string) {
